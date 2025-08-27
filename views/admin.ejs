@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Panel (DEMO)</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+</head>
+<body>
+  <div class="container mt-5">
+    <h2>Admin: Manage Users</h2>
+    <p class="text-danger"><strong>DEMO ONLY: This is a fake bank site for educational purposes only and should not be used for real financial transactions.</strong></p>
+    <table class="table">
+      <thead><tr><th>ID</th><th>Username</th><th>Balance</th><th>Restricted</th><th>Action</th></tr></thead>
+      <tbody>
+        <% users.forEach(user => { %>
+          <tr>
+            <td><%= user.id %></td>
+            <td><%= user.username %></td>
+            <td>$<%= user.balance %></td>
+            <td><%= user.restricted ? 'Yes' : 'No' %></td>
+            <td>
+              <form action="/admin/restrict" method="POST" style="display:inline;">
+                <input type="hidden" name="userId" value="<%= user.id %>">
+                <input type="hidden" name="restrict" value="<%= user.restricted ? 'false' : 'true' %>">
+                <button type="submit" class="btn btn-sm <%= user.restricted ? 'btn-success' : 'btn-danger' %>">
+                  <%= user.restricted ? 'Unrestrict' : 'Restrict' %>
+                </button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
