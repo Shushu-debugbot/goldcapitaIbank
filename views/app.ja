@@ -1,0 +1,97 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const sqlite3 = require('sqlite3').verbose();
+const bcrypt = require('bcryptjs');
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+app.use(bodyParser.urlencoded({ extended: true }));
+app.set('view engine', 'ejs');
+app.use(express.static('public'));
+
+// Initialize SQLite DB (file-based for Render persistence)
+const db = new sqlite3.Database('bank.db');
+db.serialize(() => {
+  db.run("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, balance REAL, restricted BOOLEAN DEFAULT 0)");
+  db.run("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, username TEXT, password TEXT)");
+  db.run("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL, code TEXT, completed BOOLEAN DEFAULT 0)");
+
+  // Seed fake data if empty
+  db.get("SELECT COUNT(*) as count FROM users", (err, row) => {
+    if (row.count === 0) {
+      const salt = bcrypt.genSaltSync(10);
+      db.run("INSERT INTO users (username, password, balance) VALUES (?, ?, ?)", ['user1', bcrypt.hashSync('password123', salt), 1000]);
+      db.run("INSERT INTO admins (username, password) VALUES (?, ?)", ['admin', bcrypt.hashSync('adminpass', salt)]);
+    }
+  });
+});
+
+// Routes
+app.get('/', (req, res) => res.render('login', { type: 'user' }));
+app.get('/admin', (req, res) => res.render('login', { type: 'admin' }));
+
+app.post('/login', (req, res) => {
+  const { username, password } = req.body;
+  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+    if (user && bcrypt.compareSync(password, user.password)) {
+      if (user.restricted) return res.send('Account restricted by admin.');
+      res.render('dashboard', { user });
+    } else {
+      res.send('Invalid credentials');
+    }
+  });
+});
+
+app.post('/admin/login', (req, res) => {
+  const { username, password } = req.body;
+  db.get("SELECT * FROM admins WHERE username = ?", [username], (err, admin) => {
+    if (admin && bcrypt.compareSync(password, admin.password)) {
+      db.all("SELECT * FROM users", (err, users) => {
+        res.render('admin', { users });
+      });
+    } else {
+      res.send('Invalid admin credentials');
+    }
+  });
+});
+
+app.post('/admin/restrict', (req, res) => {
+  const { userId, restrict } = req.body;
+  db.run("UPDATE users SET restricted = ? WHERE id = ?", [restrict === 'true' ? 1 : 0, userId]);
+  res.redirect('/admin');
+});
+
+app.post('/transaction', (req, res) => {
+  const { userId, amount } = req.body;
+  db.get("SELECT * FROM users WHERE id = ?", [userId], (err, user) => {
+    if (user.restricted) return res.send('Account restricted.');
+    if (user.balance < amount) return res.send('Insufficient balance.');
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    db.run("INSERT INTO transactions (user_id, amount, code) VALUES (?, ?, ?)", [userId, amount, code]);
+    res.render('confirm', { transactionId: db.lastID, code });
+  });
+});
+
+app.post('/confirm', (req, res) => {
+  const { transactionId, enteredCode } = req.body;
+  db.get("SELECT * FROM transactions WHERE id = ?", [transactionId], (err, tx) => {
+    if (tx && tx.code === enteredCode && !tx.completed) {
+      db.run("UPDATE transactions SET completed = 1 WHERE id = ?", [transactionId]);
+      db.run("UPDATE users SET balance = balance - ? WHERE id = ?", [tx.amount, tx.user_id]);
+      const doc = new PDFDocument();
+      const receiptPath = path.join(__dirname, 'public', `receipt_${transactionId}.pdf`);
+      doc.pipe(fs.createWriteStream(receiptPath));
+      doc.text(`Transaction ID: ${transactionId}`);
+      doc.text(`Amount: $${tx.amount}`);
+      doc.text(`Date: ${new Date().toLocaleString()}`);
+      doc.end();
+      res.download(receiptPath);
+    } else {
+      res.send('Invalid code or transaction already completed.');
+    }
+  });
+});
+
+app.listen(process.env.PORT || 3000, () => console.log('Server running'));
